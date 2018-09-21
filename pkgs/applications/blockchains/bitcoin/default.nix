@@ -1,9 +1,25 @@
-{ stdenv, fetchurl, pkgconfig, autoreconfHook, openssl, db48, boost, zeromq, rapidcheck
-, zlib, miniupnpc, qtbase ? null, qttools ? null, wrapQtAppsHook ? null, utillinux, protobuf, python3, qrencode, libevent
-, withGui }:
+{ stdenv
+
+# Build time
+, fetchurl, pkgconfig, autoreconfHook
+
+# Run time
+, openssl, db48, boost, zeromq, zlib, miniupnpc
+, utillinux, protobuf, qrencode, libevent
+
+# Test Time
+, rapidcheck, python3
+
+# Options and conditional deps
+
+, withGui ? stdenv.hostPlatform.isLinux
+, qtbase ? null, qttools ? null, wrapQtAppsHook ? null
+
+, enableWallet ? !stdenv.hostPlatform.isWindows
+}:
 
 with stdenv.lib;
-stdenv.mkDerivation rec{
+stdenv.mkDerivation rec {
   name = "bitcoin" + (toString (optional (!withGui) "d")) + "-" + version;
   version = "0.18.1";
 
@@ -14,23 +30,33 @@ stdenv.mkDerivation rec{
     sha256 = "5c7d93f15579e37aa2d1dc79e8f5ac675f59045fceddf604ae0f1550eb03bf96";
   };
 
+  patches = [
+    ./mingw-use-pkg-config.patch
+  ];
+
   nativeBuildInputs =
     [ pkgconfig autoreconfHook ]
     ++ optional withGui wrapQtAppsHook;
-  buildInputs = [ openssl db48 boost zlib zeromq
-                  miniupnpc protobuf libevent]
-                  ++ optionals stdenv.isLinux [ utillinux ]
-                  ++ optionals withGui [ qtbase qttools qrencode ];
 
-  configureFlags = [ "--with-boost-libdir=${boost.out}/lib"
-                     "--disable-bench"
-                   ] ++ optionals (!doCheck) [
-                     "--disable-tests"
-                     "--disable-gui-tests"
-                   ]
-                     ++ optionals withGui [ "--with-gui=qt5"
-                                            "--with-qt-bindir=${qtbase.dev}/bin:${qttools.dev}/bin"
-                                          ];
+  buildInputs = [
+    boost
+  ] ++ optionals (!stdenv.hostPlatform.isWindows) [
+    openssl db48 zlib zeromq miniupnpc protobuf libevent
+  ] ++ optionals stdenv.hostPlatform.isLinux [ utillinux ]
+    ++ optionals withGui [ qtbase qttools qrencode ];
+
+  configureFlags = [
+    (enableFeature enableWallet "wallet")
+    (enableFeatureAs withGui "gui" "qt5")
+    "--disable-bench"
+  ] ++ optionals (!stdenv.hostPlatform.isWindows) [
+    "--with-boost-libdir=${boost.out}/lib"
+  ] ++ optionals (!doCheck) [
+    "--disable-tests"
+    "--disable-gui-tests"
+  ] ++ optionals withGui [
+    "--with-qt-bindir=${qtbase.dev}/bin:${qttools.dev}/bin"
+  ];
 
   checkInputs = [ rapidcheck python3 ];
 
@@ -55,7 +81,8 @@ stdenv.mkDerivation rec{
     homepage = http://www.bitcoin.org/;
     maintainers = with maintainers; [ roconnor AndersonTorres ];
     license = licenses.mit;
-    # bitcoin needs hexdump to build, which doesn't seem to build on darwin at the moment.
-    platforms = platforms.linux;
+    broken = !(withGui -> enableWallet)
+      || (withGui && !stdenv.hostPlatform.isLinux);
+    platforms = platforms.all;
   };
 }
